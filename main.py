@@ -3,77 +3,93 @@ import torch
 from transformers import pipeline
 import pandas as pd
 import os
-import numpy
 from datasets import Dataset, DatasetDict
 import datasets
 from transformers.pipelines.pt_utils import KeyDataset
 from tqdm.auto import tqdm
-import warnings
 import boto3
 from botocore.exceptions import ClientError
 import logging
+import warnings
 from io import StringIO
+from wsgiref.simple_server import make_server
+from pyramid.config import Configurator
+from pyramid.response import Response
 
-print("Se importaron los módulos")
-warnings.filterwarnings("ignore", message = "Length of IterableDataset.*")
+warnings.filterwarnings("ignore", message="Length of IterableDataset.*")
+
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
-AWS_ACCESS_KEY          = "AKIARQECLQAX7SKFACZF"
-AWS_SECRET_ACCESS_KEY   = "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"
-AWS_S3_BUCKET_NAME      = "bucket-prueba1coes"
-AWS_REGION_NAME         = "sa-east-1"
 
-print("Previo al asignar el modelo")
+train_df = pd.DataFrame(columns = ["cont", "audio", "Resultado"])
+
+AWS_ACCESS_KEY = "AKIARQECLQAX7SKFACZF"
+AWS_SECRET_ACCESS_KEY = "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"
+AWS_S3_BUCKET_NAME = "bucket-prueba1coes"
+AWS_REGION_NAME = "sa-east-1"
+
+s3_client = boto3.resource(
+        service_name = 's3',
+        region_name= AWS_REGION_NAME,
+        aws_access_key_id= AWS_ACCESS_KEY,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+        )
+
+s3 = boto3.client('s3',
+                                region_name= AWS_REGION_NAME,
+                                aws_access_key_id= AWS_ACCESS_KEY,
+                                aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+                                )
+
 transcribe = pipeline(
-                        task = "automatic-speech-recognition",
-                        model = "Cristhian2430/whisper-large-coes-v3",
-                        chunk_length_s = 30,
-                        device = device
-                        )
-print("Se descargo modelo")
-transcribe.model.config.forced_decoder_ids = transcribe.tokenizer.get_decoder_prompt_ids(
-    language = "es", 
-    task = "transcribe"
-    )
-print("Se ajusto modelo")
-s3_client   = boto3.resource(
-                            service_name            = "s3",
-                            region_name             = AWS_REGION_NAME,
-                            aws_access_key_id       = AWS_ACCESS_KEY,
-                            aws_secret_access_key   = AWS_SECRET_ACCESS_KEY
-                            )
-s3          = boto3.client("s3",
-                            region_name             = AWS_REGION_NAME,
-                            aws_access_key_id       = AWS_ACCESS_KEY,
-                            aws_secret_access_key   = AWS_SECRET_ACCESS_KEY
-                            )
+                      task            = "automatic-speech-recognition",
+                      model           = "model/",
+                      chunk_length_s  = 30,
+                      device          = device
+                      )
+transcribe.model.config.forced_decoder_ids = transcribe.tokenizer.get_decoder_prompt_ids(language="es", task="transcribe")
 
-bucket = s3_client.Bucket(AWS_S3_BUCKET_NAME)
-print("Se conectaron")
-df_res = pd.DataFrame(columns = ["cont", "audio", "resultado"])
-cont = 0
-print("Inicia Bucle Transcripción")
-for file in bucket.objects.all():
-    if file.key.endswith(".opus"):
-        print("-------------------------")
-        print("Se encontró archivo OPUS")
-        df_res = pd.concat([df_res, pd.DataFrame({"cont":[cont], "audio":[file.key]})], ignore_index = True)
-        print("Se agregó al DataFrame")
-        response = s3.get_object(Bucket = AWS_S3_BUCKET_NAME, Key = file.key)
-        print("Se obtuvo archivo")
-        audio_data = response["Body"].read()
-        df_res.loc[cont, "resultado"] = transcribe(audio_data)["text"]
-        print("Se transcribió")
-        cont = cont + 1
-print("Terminó Bucle Transcripción")
-csv_buffer = StringIO()
-df_res.to_csv(csv_buffer, index = False, encoding = "utf-8")
-csv_buffer.seek(0)
-print("Se procederá a enviar el csv a S3")
-response = s3.put_object(Body = csv_buffer.getvalue(), Bucket = AWS_S3_BUCKET_NAME, Key = "Transcripcion.csv")
+def main():
+    global train_df
+    # Upload the file
+    
+    
+    bukcet = s3_client.Bucket(AWS_S3_BUCKET_NAME)
 
-warnings.resetwarnings()
+    cont = 0
+    for file in bukcet.objects.all():
+        if file.key.endswith(".opus"):
 
-df_1 = pd.DataFrame({"Col1":[1,2], "Col2":[3,4]})
+            train_df = pd.concat([train_df, pd.DataFrame({'cont': [cont], 'audio': [file.key]})], ignore_index=True)
+            
+            response = s3.get_object(Bucket = AWS_S3_BUCKET_NAME, Key = file.key)
+            audio_data = response['Body'].read()
 
-def handler(event, context):
-    return {"statusCode":200, "body": df_1.loc[1].tolist()}
+            train_df.loc[cont, "Resultado"] = transcribe(audio_data)["text"]
+            cont = cont + 1
+            
+    csv_buffer = StringIO()
+    train_df.to_csv(csv_buffer, index=False, encoding='utf-8')   
+    csv_buffer.seek(0)
+
+    response = s3.put_object(Body= csv_buffer.getvalue(), Bucket = AWS_S3_BUCKET_NAME, Key = "Trancripcion.csv")
+
+    print(train_df)
+
+    warnings.resetwarnings()
+
+def hello_world(request):
+    name = os.environ.get('NAME')
+    if name == None or len(name) == 0:
+        name = "world"
+    message = "Hello, " + name + "!\n"
+    return Response(message)
+
+if __name__ == "__main__":
+    main()
+    port = int(os.environ.get("PORT"))
+    with Configurator() as config:
+        config.add_route('hello', '/')
+        config.add_view(hello_world, route_name='hello')
+        app = config.make_wsgi_app()
+    server = make_server('0.0.0.0', port, app)
+    server.serve_forever()
