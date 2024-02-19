@@ -3,6 +3,9 @@ from pyramid.config import Configurator
 from pyramid.response import Response
 import os
 import pandas as pd
+from transformers import pipeline
+from datasets import Dataset, DatasetDict
+import datasets
 
 train_df = pd.DataFrame(columns = ["cont", "audio", "Resultado"])
 
