@@ -2,12 +2,6 @@ from wsgiref.simple_server import make_server
 from pyramid.config import Configurator
 from pyramid.response import Response
 import os
-import pandas as pd
-from transformers import pipeline
-from datasets import Dataset, DatasetDict
-import datasets
-
-train_df = pd.DataFrame(columns = ["cont", "audio", "Resultado"])
 
 def hello_world(request):
     name = os.environ.get('NAME')
