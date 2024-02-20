@@ -1,5 +1,3 @@
 pyramid==2.0
 datasets
 pandas
-transformers
-huggingface-hub
